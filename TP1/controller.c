@@ -21,13 +21,13 @@
 typedef enum { MODE_OFF=0, MODE_OP=1 } ModeState;
 typedef enum { BOX_MOVE=0, BOX_LOAD=1 } BoxState;
 typedef enum {
-  P_SEEK_SS=0,     // T1 a andar até SS
+  P_SEEK_SS,
+  P_wait_for_instruction,     // T1 a andar até SS
   P_PRESS_DOWN,    // MZ=1 até atingir fundo
   P_PRESS_DWELL,   // MZ=1 durante 1.5 s
   P_PRESS_UP,      // MZ=0 até atingir topo
   P_WAIT_BOX,      // espera por caixa pronta
   P_TO_BOX,        // T1 a andar até ST
-  P_CLEAR_ST,      // espera ST voltar a 0
   P_REJ_EXT,       // IP=1 até SIE
   P_REJ_RET        // IP=0 até SIR
 } PieceState;
@@ -55,9 +55,6 @@ int main(void) {
     // flanco de subida do BA
     bool ba_edge = (!prev_BA && BA);
     prev_BA = BA;
-
-	// detectar flanco de descida de SS (1 -> 0)
-	bool ss_falling = (prev_SS && !SS);
 
     if (mode == MODE_OFF) {
       // OFF: tudo parado
@@ -107,13 +104,8 @@ int main(void) {
         case BOX_MOVE:
           T2 = 1;
 
-          // contar caixa expedida quando SC passa 0->1
-          if ((prev_SC == 0) && (SC == 1)) {
-            CC++;
-          }
-
           // parar quando chega caixa (SC==0, lógica negativa)
-          if (SC == 0) {
+          if (SC == 0 && prev_SC == 1) {
             T2 = 0;
             pieces_in_box = 0;
             box_st = BOX_LOAD;
@@ -124,6 +116,8 @@ int main(void) {
           T2 = 0;
           if (pieces_in_box >= 3) {
             T2 = 1;
+            pieces_in_box = 0;
+            CC++;
             box_st = BOX_MOVE;
           }
           break;
@@ -143,10 +137,39 @@ int main(void) {
           IP = 0;
           MZ = 0;
 
-          if (ss_falling) {
+          if (prev_SS && !SS) {
             // pára e amostra seleção + cor
 			
             T1 = 0;
+            piece_st = P_wait_for_instruction;
+          }
+          break;
+            /*ms_latch = ms_now;
+            sv_latch = SV;
+
+            if ((ms_latch != 0) && (sv_latch == ms_latch)) {
+              // match -> prensar
+              press_moving_seen = false;
+              MZ = 1;
+              piece_st = P_PRESS_DOWN;
+            } else {
+              // mismatch (ou BN) -> rejeitar
+              IP = 1;
+              piece_st = P_REJ_EXT;
+            }
+          }
+          break;
+        */
+        
+        case P_wait_for_instruction:
+          T1 = 0;
+          IP = 0;
+          MZ = 0;
+          if(BSA==0 && BSV==0) {
+            // se nada selecionado, volta a procurar por SS
+            piece_st = P_wait_for_instruction;
+            break;
+          } else {
             ms_latch = ms_now;
             sv_latch = SV;
 
@@ -162,6 +185,7 @@ int main(void) {
             }
           }
           break;
+
 
         case P_PRESS_DOWN:
           T1 = 0;
@@ -217,22 +241,11 @@ int main(void) {
           MZ = 0;
 
           // conta peça carregada no flanco 0->1 do ST
-          if (!prev_ST && ST) {
+          if (prev_ST==1 && ST==0) {
             pieces_in_box++;
-            T1 = 0;
-            piece_st = P_CLEAR_ST;
+            piece_st = P_SEEK_SS;
           }
           prev_ST = ST;
-          break;
-
-        case P_CLEAR_ST:
-          T1 = 0;
-          IP = 0;
-          MZ = 0;
-
-         if (!ST) {
-            piece_st = P_SEEK_SS;
-         }
           break;
 
         case P_REJ_EXT:
